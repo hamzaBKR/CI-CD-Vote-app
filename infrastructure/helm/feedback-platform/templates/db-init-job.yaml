@@ -1,0 +1,58 @@
+{{- if .Values.dbInit.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: feedback-db-init
+  namespace: {{ .Values.namespace }}
+spec:
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app: feedback-db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: db-init
+          image: "{{ .Values.dbInit.image.repository }}:{{ .Values.dbInit.image.tag }}"
+          imagePullPolicy: {{ .Values.dbInit.image.pullPolicy }}
+          env:
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+          command:
+            - /bin/sh
+            - -c
+            - |
+              echo "Waiting for PostgreSQL..."
+
+              until pg_isready -h {{ .Values.postgres.name }} -p {{ .Values.postgres.service.port }} -U "$POSTGRES_USER" -d "$POSTGRES_DB"; do
+                echo "PostgreSQL is not ready yet. Retrying..."
+                sleep 5
+              done
+
+              echo "PostgreSQL is ready. Creating feedback table..."
+
+              psql -h {{ .Values.postgres.name }} -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<EOF
+              CREATE TABLE IF NOT EXISTS feedback (
+                  id SERIAL PRIMARY KEY,
+                  rating VARCHAR(50) NOT NULL,
+                  comment TEXT,
+                  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+              );
+              EOF
+
+              echo "Database initialization completed."
+{{- end }}

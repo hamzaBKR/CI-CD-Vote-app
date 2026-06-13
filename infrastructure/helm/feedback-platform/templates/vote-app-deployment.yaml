@@ -1,0 +1,40 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.voteApp.name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.voteApp.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.voteApp.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.voteApp.name }}
+    spec:
+      containers:
+        - name: {{ .Values.voteApp.name }}
+          image: "{{ .Values.voteApp.image.repository }}:{{ .Values.voteApp.image.tag }}"
+          imagePullPolicy: {{ .Values.voteApp.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.voteApp.service.port }}
+          env:
+            - name: REDIS_HOST
+              value: {{ .Values.redis.name | quote }}
+            - name: REDIS_PORT
+              value: {{ .Values.redis.service.port | quote }}
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.voteApp.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.voteApp.service.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+{{ toYaml .Values.voteApp.resources | indent 12 }}

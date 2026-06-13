@@ -1,0 +1,55 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.resultApp.name }}
+  namespace: {{ .Values.namespace }}
+spec:
+  replicas: {{ .Values.resultApp.replicas }}
+  selector:
+    matchLabels:
+      app: {{ .Values.resultApp.name }}
+  template:
+    metadata:
+      labels:
+        app: {{ .Values.resultApp.name }}
+    spec:
+      containers:
+        - name: {{ .Values.resultApp.name }}
+          image: "{{ .Values.resultApp.image.repository }}:{{ .Values.resultApp.image.tag }}"
+          imagePullPolicy: {{ .Values.resultApp.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.resultApp.service.port }}
+          env:
+            - name: POSTGRES_HOST
+              value: {{ .Values.postgres.name | quote }}
+            - name: POSTGRES_PORT
+              value: {{ .Values.postgres.service.port | quote }}
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_USER
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_PASSWORD
+            - name: POSTGRES_DB
+              valueFrom:
+                secretKeyRef:
+                  name: postgres-secret
+                  key: POSTGRES_DB
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.resultApp.service.port }}
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: {{ .Values.resultApp.service.port }}
+            initialDelaySeconds: 20
+            periodSeconds: 20
+          resources:
+{{ toYaml .Values.resultApp.resources | indent 12 }}

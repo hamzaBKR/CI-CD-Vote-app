@@ -1,0 +1,96 @@
+namespace: feedback-app
+
+voteApp:
+  name: vote-app
+  replicas: 1
+  image:
+    repository: hamzabaker/docker-vote-app
+    tag: v1
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 3000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+resultApp:
+  name: result-app
+  replicas: 1
+  image:
+    repository: hamzabaker/docker-result-app
+    tag: v1
+    pullPolicy: Always
+  service:
+    type: ClusterIP
+    port: 4000
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+worker:
+  name: worker
+  replicas: 1
+  image:
+    repository: hamzabaker/docker-worker
+    tag: v1
+    pullPolicy: Always
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: 300m
+      memory: 256Mi
+
+redis:
+  name: redis
+  image:
+    repository: redis
+    tag: 7-alpine
+    pullPolicy: IfNotPresent
+  service:
+    port: 6379
+
+postgres:
+  name: postgres
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
+  auth:
+    user: postgres
+    password: postme
+    database: feedbackdb
+  service:
+    port: 5432
+  storage:
+    size: 1Gi
+
+ingress:
+  enabled: true
+  className: nginx
+  voteHost: vote.local
+  resultHost: result.local
+
+hpa:
+  enabled: true
+  minReplicas: 1
+  maxReplicas: 5
+  cpuAverageUtilization: 50
+
+
+dbInit:
+  enabled: true
+  image:
+    repository: postgres
+    tag: 16-alpine
+    pullPolicy: IfNotPresent
