@@ -41,7 +41,7 @@ worker:
   replicas: 1
   image:
     repository: hamzabaker/docker-worker
-    tag: v1
+    tag: v2
     pullPolicy: Always
   resources:
     requests:
