@@ -1,0 +1,285 @@
+name: CI-CD Helm GitOps
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "infrastructure/helm/feedback-platform/values.yaml"
+
+permissions:
+  contents: write
+  security-events: write
+
+env:
+  HELM_VALUES_FILE: infrastructure/helm/feedback-platform/values.yaml
+
+jobs:
+  extract-version:
+    name: Extract version from commit message
+    runs-on: ubuntu-latest
+
+    outputs:
+      image_tag: ${{ steps.version.outputs.image_tag }}
+
+    steps:
+      - name: Extract version
+        id: version
+        run: |
+          echo "Commit message:"
+          echo "${{ github.event.head_commit.message }}"
+
+          VERSION=$(echo "${{ github.event.head_commit.message }}" | grep -oE ':[Vv][0-9]+([.][0-9]+){0,2}' | head -n1 | sed 's/^://')
+
+          if [ -z "$VERSION" ]; then
+            echo "ERROR: No version found in commit message."
+            echo "Use commit message like:"
+            echo "git commit -m \"improve vote app UI :V3\""
+            exit 1
+          fi
+
+          echo "Detected version: $VERSION"
+          echo "image_tag=$VERSION" >> $GITHUB_OUTPUT
+
+  validate:
+    name: Validate source code and Helm chart
+    runs-on: ubuntu-latest
+    needs: extract-version
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare logs folder
+        run: mkdir -p ci-logs
+
+      - name: Validate vote-app package
+        run: |
+          echo "Validating vote-app package.json..." | tee ci-logs/validate-vote-app.log
+          test -f apps/vote-app/package.json
+          test -f apps/vote-app/Dockerfile
+
+      - name: Validate result-app package
+        run: |
+          echo "Validating result-app package.json..." | tee ci-logs/validate-result-app.log
+          test -f apps/result-app/package.json
+          test -f apps/result-app/Dockerfile
+
+      - name: Validate worker project
+        run: |
+          echo "Validating worker project..." | tee ci-logs/validate-worker.log
+          test -f apps/worker/worker.csproj
+          test -f apps/worker/Dockerfile
+          test -f apps/worker/Program.cs
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Helm lint
+        run: |
+          helm lint infrastructure/helm/feedback-platform 2>&1 | tee ci-logs/helm-lint.log
+
+      - name: Helm template render
+        run: |
+          helm template feedback-platform infrastructure/helm/feedback-platform \
+            --set namespace=feedback-v2 \
+            --set ingress.enabled=false \
+            2>&1 | tee ci-logs/helm-template.log
+
+      - name: Upload validation logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: validation-failure-logs
+          path: ci-logs/
+          if-no-files-found: ignore
+
+  build-and-push:
+    name: Build and push Docker images
+    runs-on: ubuntu-latest
+    needs:
+      - extract-version
+      - validate
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Prepare logs folder
+        run: mkdir -p ci-logs
+
+      - name: Login to Docker Hub
+        run: |
+          echo "${{ secrets.DOCKER_PASSWORD }}" | docker login \
+            -u "${{ secrets.DOCKER_USERNAME }}" \
+            --password-stdin \
+            2>&1 | tee ci-logs/docker-login.log
+
+      - name: Build vote-app image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/docker-vote-app:${{ needs.extract-version.outputs.image_tag }} \
+            ./apps/vote-app \
+            2>&1 | tee ci-logs/build-vote-app.log
+
+      - name: Build result-app image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/docker-result-app:${{ needs.extract-version.outputs.image_tag }} \
+            ./apps/result-app \
+            2>&1 | tee ci-logs/build-result-app.log
+
+      - name: Build worker image
+        run: |
+          docker build \
+            -t ${{ secrets.DOCKER_USERNAME }}/docker-worker:${{ needs.extract-version.outputs.image_tag }} \
+            ./apps/worker \
+            2>&1 | tee ci-logs/build-worker.log
+
+      - name: Push vote-app image
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/docker-vote-app:${{ needs.extract-version.outputs.image_tag }} \
+            2>&1 | tee ci-logs/push-vote-app.log
+
+      - name: Push result-app image
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/docker-result-app:${{ needs.extract-version.outputs.image_tag }} \
+            2>&1 | tee ci-logs/push-result-app.log
+
+      - name: Push worker image
+        run: |
+          docker push ${{ secrets.DOCKER_USERNAME }}/docker-worker:${{ needs.extract-version.outputs.image_tag }} \
+            2>&1 | tee ci-logs/push-worker.log
+
+      - name: Upload build or push logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-push-failure-logs
+          path: ci-logs/
+          if-no-files-found: ignore
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-push-logs
+          path: ci-logs/
+          if-no-files-found: ignore
+
+  trivy-scan:
+    name: Scan Docker images with Trivy
+    runs-on: ubuntu-latest
+    needs:
+      - extract-version
+      - build-and-push
+
+    steps:
+      - name: Prepare logs folder
+        run: mkdir -p ci-logs trivy-reports
+
+      - name: Scan vote-app image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-vote-app:${{ needs.extract-version.outputs.image_tag }}
+          format: table
+          output: trivy-reports/trivy-vote-app.txt
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Scan result-app image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-result-app:${{ needs.extract-version.outputs.image_tag }}
+          format: table
+          output: trivy-reports/trivy-result-app.txt
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Scan worker image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-worker:${{ needs.extract-version.outputs.image_tag }}
+          format: table
+          output: trivy-reports/trivy-worker.txt
+          severity: HIGH,CRITICAL
+          exit-code: 1
+          ignore-unfixed: true
+
+      - name: Upload Trivy reports on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-failure-reports
+          path: trivy-reports/
+          if-no-files-found: ignore
+
+      - name: Upload Trivy reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-reports
+          path: trivy-reports/
+          if-no-files-found: ignore
+
+  update-helm-values:
+    name: Update Helm values for ArgoCD
+    runs-on: ubuntu-latest
+    needs:
+      - extract-version
+      - trivy-scan
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Update image tags in Helm values
+        run: |
+          IMAGE_TAG="${{ needs.extract-version.outputs.image_tag }}"
+
+          sed -i "/voteApp:/,/resultApp:/ s/tag:.*/tag: ${IMAGE_TAG}/" $HELM_VALUES_FILE
+          sed -i "/resultApp:/,/worker:/ s/tag:.*/tag: ${IMAGE_TAG}/" $HELM_VALUES_FILE
+          sed -i "/worker:/,/redis:/ s/tag:.*/tag: ${IMAGE_TAG}/" $HELM_VALUES_FILE
+
+          echo "Updated Helm values:"
+          grep -A5 "voteApp:" $HELM_VALUES_FILE
+          grep -A5 "resultApp:" $HELM_VALUES_FILE
+          grep -A5 "worker:" $HELM_VALUES_FILE
+
+      - name: Commit updated Helm values
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+
+          git add $HELM_VALUES_FILE
+
+          git diff --staged --quiet || git commit -m "Update Helm image tags to ${{ needs.extract-version.outputs.image_tag }} [skip ci]"
+
+          git push
+
+  deployment-summary:
+    name: Generate deployment summary
+    runs-on: ubuntu-latest
+    needs:
+      - extract-version
+      - validate
+      - build-and-push
+      - trivy-scan
+      - update-helm-values
+
+    steps:
+      - name: Create summary
+        run: |
+          echo "## 🚀 CI/CD Deployment Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Image tag:** ${{ needs.extract-version.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Docker Images" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ secrets.DOCKER_USERNAME }}/docker-vote-app:${{ needs.extract-version.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ secrets.DOCKER_USERNAME }}/docker-result-app:${{ needs.extract-version.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "- ${{ secrets.DOCKER_USERNAME }}/docker-worker:${{ needs.extract-version.outputs.image_tag }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### GitOps" >> $GITHUB_STEP_SUMMARY
+          echo "Helm values were updated. ArgoCD will detect the Git change and deploy automatically." >> $GITHUB_STEP_SUMMARY
