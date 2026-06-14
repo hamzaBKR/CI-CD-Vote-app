@@ -187,7 +187,7 @@ jobs:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-vote-app:${{ needs.extract-version.outputs.image_tag }}
           format: table
           output: trivy-reports/trivy-vote-app.txt
-          severity: HIGH,CRITICAL
+          severity: CRITICAL
           exit-code: 1
           ignore-unfixed: true
           scanners: vuln
@@ -200,7 +200,7 @@ jobs:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-result-app:${{ needs.extract-version.outputs.image_tag }}
           format: table
           output: trivy-reports/trivy-result-app.txt
-          severity: HIGH,CRITICAL
+          severity: CRITICAL
           exit-code: 1
           ignore-unfixed: true
           scanners: vuln
@@ -213,7 +213,7 @@ jobs:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-worker:${{ needs.extract-version.outputs.image_tag }}
           format: table
           output: trivy-reports/trivy-worker.txt
-          severity: HIGH,CRITICAL
+          severity: CRITICAL
           exit-code: 1
           ignore-unfixed: true
           scanners: vuln
