@@ -176,10 +176,12 @@ jobs:
       - build-and-push
 
     steps:
-      - name: Prepare logs folder
-        run: mkdir -p ci-logs trivy-reports
+      - name: Prepare reports folder
+        run: mkdir -p trivy-reports
 
       - name: Scan vote-app image
+        id: scan_vote
+        continue-on-error: true
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-vote-app:${{ needs.extract-version.outputs.image_tag }}
@@ -188,8 +190,11 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 1
           ignore-unfixed: true
+          scanners: vuln
 
       - name: Scan result-app image
+        id: scan_result
+        continue-on-error: true
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-result-app:${{ needs.extract-version.outputs.image_tag }}
@@ -198,8 +203,11 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 1
           ignore-unfixed: true
+          scanners: vuln
 
       - name: Scan worker image
+        id: scan_worker
+        continue-on-error: true
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: ${{ secrets.DOCKER_USERNAME }}/docker-worker:${{ needs.extract-version.outputs.image_tag }}
@@ -208,14 +216,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: 1
           ignore-unfixed: true
-
-      - name: Upload Trivy reports on failure
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: trivy-failure-reports
-          path: trivy-reports/
-          if-no-files-found: ignore
+          scanners: vuln
 
       - name: Upload Trivy reports
         if: always()
@@ -224,6 +225,23 @@ jobs:
           name: trivy-reports
           path: trivy-reports/
           if-no-files-found: ignore
+
+      - name: Check Trivy scan results
+        if: always()
+        run: |
+          echo "Vote scan result: ${{ steps.scan_vote.outcome }}"
+          echo "Result scan result: ${{ steps.scan_result.outcome }}"
+          echo "Worker scan result: ${{ steps.scan_worker.outcome }}"
+
+          if [ "${{ steps.scan_vote.outcome }}" = "failure" ] || \
+             [ "${{ steps.scan_result.outcome }}" = "failure" ] || \
+             [ "${{ steps.scan_worker.outcome }}" = "failure" ]; then
+            echo "One or more Trivy scans found HIGH or CRITICAL vulnerabilities."
+            echo "Reports were uploaded as workflow artifacts."
+            exit 1
+          fi
+
+          echo "All Trivy scans passed."
 
   update-helm-values:
     name: Update Helm values for ArgoCD
