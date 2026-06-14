@@ -5,7 +5,7 @@ voteApp:
   replicas: 1
   image:
     repository: hamzabaker/docker-vote-app
-    tag: v1
+    tag: V5
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -23,7 +23,7 @@ resultApp:
   replicas: 1
   image:
     repository: hamzabaker/docker-result-app
-    tag: v1
+    tag: V5
     pullPolicy: Always
   service:
     type: ClusterIP
@@ -41,7 +41,7 @@ worker:
   replicas: 1
   image:
     repository: hamzabaker/docker-worker
-    tag: v2
+    tag: V5
     pullPolicy: Always
   resources:
     requests:
